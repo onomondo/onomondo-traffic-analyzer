@@ -7,6 +7,11 @@ binary-parser@^1.7.0:
   resolved "https://registry.yarnpkg.com/binary-parser/-/binary-parser-1.7.0.tgz#117dbfb071dde44a4910ea072a8d32e1549e8e12"
   integrity sha512-lIWQLmiEJtx2ZAUPbZWLA/0bgxYdWkySU9pZq5dNRcyzliZCBIwbgLeyydu57GFskGcZDbirMjPSgVcUgZpbdg==
 
+minimist@^1.2.5:
+  version "1.2.5"
+  resolved "https://registry.yarnpkg.com/minimist/-/minimist-1.2.5.tgz#67d66014b66a6a8aaa0c083c5fd58df4e4e97602"
+  integrity sha512-FM9nNUYrRBAELZQT3xeZQ7fmMOBg6nWNmJKTcgsJeaLstP/UODVpGsr5OhXhhXg6f+qtJ8uiZ+PUxkDWcgIXLw==
+
 onomondo-ip-checker@onomondo/onomondo-ip-checker:
   version "1.2.1"
   resolved "git+ssh://git@github.com/onomondo/onomondo-ip-checker.git#8e90b405a2b1b980add65d38d40166607fafcf1a"

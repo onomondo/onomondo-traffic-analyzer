@@ -5,6 +5,7 @@
   "license": "MIT",
   "dependencies": {
     "binary-parser": "^1.7.0",
+    "minimist": "^1.2.5",
     "onomondo-ip-checker": "onomondo/onomondo-ip-checker",
     "pcap-parser": "^0.2.1",
     "pretty-bytes": "^5.6.0"

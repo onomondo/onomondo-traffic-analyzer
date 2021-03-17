@@ -10,11 +10,19 @@ $ cd onomondo-traffic-analyzer
 $ yarn
 ```
 
-## How to run
+## Parameters
+
+### type=[ethernet | ip]
+
+Specify the type of the pcap file. Either it's `ip` or `ethernet`.
+
+Optional, defaults to `ip`.
+
+## Example on how to run
 
 You need a pcap file somewhere. It's supposed to be a couple (or more) from one fleet.
 
-`$ node index.js some.pcap`
+`$ ./index.js --type=ip some.pcap`
 
 which would return
 

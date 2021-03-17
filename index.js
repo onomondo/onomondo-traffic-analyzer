@@ -1,8 +1,21 @@
+#!/usr/bin/env node
+
 const pcapParser = require('pcap-parser')
 const BinaryParser = require('binary-parser').Parser
 const sessions = require('./sessions')
 const prettyBytes = require('pretty-bytes')
 const ipChecker = require('onomondo-ip-checker')
+const minimist = require('minimist')
+
+const argv = minimist(process.argv.slice(2))
+const pcapFilename = argv._.join(' ')
+const packetType = argv.type || 'ip'
+const hasCorrectPacketType = packetType === 'ip' || packetType === 'ethernet'
+const hasAllParameters = packetType && pcapFilename
+
+if (!pcapFilename) exit('You need to specify filename to pcap file')
+if (!hasAllParameters) exit('Not all needed parameters are specified')
+if (!hasCorrectPacketType) exit('Only "ip" and "ethernet" packet types are allowed')
 
 const totals = {
   bytesCount: 0,
@@ -22,8 +35,11 @@ const allTcpSessions = []
 const trafficToHosts = {}
 
 pcapParser
-  .parse(process.argv[2])
-  .on('packet', ({ header, data: ipPacket }) => {
+  .parse(pcapFilename)
+  .on('packet', ({ header, data: packet }) => {
+    const ipPacket = packetType === 'ip'
+      ? packet
+      : packet.slice(14)
     const ipHeader = ipHeaderParser.parse(ipPacket)
     const isIcmp = ipHeader.protocol === 1
     const isTcp = ipHeader.protocol === 6
@@ -32,12 +48,12 @@ pcapParser
     const trafficHost = isFromDevice ? ip(ipHeader.dst) : ip(ipHeader.src)
     trafficToHosts[trafficHost] = trafficToHosts[trafficHost] || { bytesUp: 0, bytesDown: 0 }
     if (isFromDevice) {
-      trafficToHosts[trafficHost].bytesUp += ipPacket.length
+      trafficToHosts[trafficHost].bytesUp += packet.length
     } else {
-      trafficToHosts[trafficHost].bytesDown += ipPacket.length
+      trafficToHosts[trafficHost].bytesDown += packet.length
     }
 
-    totals.bytesCount += ipPacket.length
+    totals.bytesCount += packet.length
     totals.packetsCount += 1
 
     if (isUdp) {
@@ -45,14 +61,14 @@ pcapParser
       const udpHeader = udpHeaderParser.parse(udpPacket)
       const currentSession = sessions.udp.get({ ipHeader, udpHeader }) || { packets: 0, bytes: 0 }
 
-      totals.udpBytesCount += ipPacket.length
+      totals.udpBytesCount += packet.length
 
       sessions.udp.set({
         ipHeader,
         udpHeader,
         value: {
           packets: currentSession.packets + 1,
-          bytes: currentSession.bytes + ipPacket.length
+          bytes: currentSession.bytes + packet.length
         }
       })
     }
@@ -62,7 +78,7 @@ pcapParser
       const isFirst = tcpHeader.flags.syn && !tcpHeader.flags.ack
       const isTls = tcpHeader.srcPort === 443 || tcpHeader.srcPort === 8883 || tcpHeader.dstPort === 443 || tcpHeader.dstPort === 8883
 
-      totals.tcpBytesCount += ipPacket.length
+      totals.tcpBytesCount += packet.length
 
       // Retransmission handling
       const tcpPacketHex = tcpPacket.toString('hex')
@@ -76,7 +92,6 @@ pcapParser
       }
 
       if (isFirst) {
-        // If srcIp:srcPort <-> dstIp:dstPort is reused, then
         const currentSession = sessions.tcp.get({ ipHeader, tcpHeader })
         const tcpPortsAlreadyInUse = !!currentSession
         if (tcpPortsAlreadyInUse) {
@@ -102,7 +117,7 @@ pcapParser
       }
 
       session.packets += 1
-      session.bytes += ipPacket.length
+      session.bytes += packet.length
       sessions.tcp.set({
         ipHeader,
         tcpHeader,
@@ -112,7 +127,6 @@ pcapParser
   })
   .on('end', () => {
     sessions.tcp.getAll().forEach(tcpSession => allTcpSessions.push(tcpSession))
-    // console.log(`Retransmissions: ${tcpRetransmission.resentBytesCount}b/${tcpRetransmission.allPacketsByteCount}b (${Math.floor(100 * (tcpRetransmission.resentBytesCount / tcpRetransmission.allPacketsByteCount))}%)`)
     console.log([
       '',
       '🌎 Overall information',
@@ -184,6 +198,17 @@ function pretty (bytes, length = 12, align = 'right') {
   return strLen(prettyBytes(bytes, { minimumFractionDigits: 2, maximumFractionDigits: 2 }), length, align)
 }
 
+function ip (buf) {
+  return `${buf[0]}.${buf[1]}.${buf[2]}.${buf[3]}`
+}
+
+function exit (str) {
+  console.log(str)
+  console.log()
+  console.log('See https://github.com/onomondo/onomondo-traffic-analyzer for more information')
+  process.exit(1)
+}
+
 const ipHeaderParser = new BinaryParser()
   .endianess('big')
   .bit4('version')
@@ -238,7 +263,3 @@ const tlsHeaderParser = new BinaryParser()
   .uint8('type')
   .uint16('version')
   .uint16('length')
-
-function ip (buf) {
-  return `${buf[0]}.${buf[1]}.${buf[2]}.${buf[3]}`
-}
