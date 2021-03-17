@@ -1,7 +1,7 @@
 const pcapParser = require('pcap-parser')
 const BinaryParser = require('binary-parser').Parser
 const sessions = require('./sessions')
-const pretty = require('pretty-bytes')
+const prettyBytes = require('pretty-bytes')
 const ipChecker = require('onomondo-ip-checker')
 
 const totals = {
@@ -114,56 +114,61 @@ pcapParser
     sessions.tcp.getAll().forEach(tcpSession => allTcpSessions.push(tcpSession))
     // console.log(`Retransmissions: ${tcpRetransmission.resentBytesCount}b/${tcpRetransmission.allPacketsByteCount}b (${Math.floor(100 * (tcpRetransmission.resentBytesCount / tcpRetransmission.allPacketsByteCount))}%)`)
     console.log([
+      '',
       '🌎 Overall information',
       '======================',
       `Total traffic: ${pretty(totals.bytesCount)}`,
-      `TCP traffic: ${pretty(totals.tcpBytesCount)} (${percentage(totals.tcpBytesCount, totals.bytesCount)}% of all traffic)`,
-      `UDP traffic: ${pretty(totals.udpBytesCount)} (${percentage(totals.udpBytesCount, totals.bytesCount)}% of all traffic)`
+      `TCP traffic:   ${pretty(totals.tcpBytesCount)} (${percentage(totals.tcpBytesCount, totals.bytesCount)}% of all traffic)`,
+      `UDP traffic:   ${pretty(totals.udpBytesCount)} (${percentage(totals.udpBytesCount, totals.bytesCount)}% of all traffic)`,
+      ''
     ].join('\n'))
-    console.log()
 
     console.log([
+      '',
       '👯‍♀️ TCP Retransmission information',
       '=================================',
+      `Total TCP traffic:  ${pretty(tcpRetransmission.allPacketsByteCount)} (${tcpRetransmission.allPacketsCount} packets)`,
+      `Resent TCP traffic: ${pretty(tcpRetransmission.resentBytesCount)} (${tcpRetransmission.resentPacketsCount} packets)`,
+      `TCP retransmisisons count for ${percentage(tcpRetransmission.resentBytesCount, tcpRetransmission.allPacketsByteCount)}% of all TCP traffic`,
+      '',
       'The TCP retransmission says something about how much TCP traffic is resent.',
       'It is not necesarrily a bad thing, but if the percentage is above 30% you could',
       'mention to the customer that there is a lot of TCP retransmissions and that they',
       'might want to look into that by using live monitor.',
-      '',
-      `Total TCP traffic: ${pretty(tcpRetransmission.allPacketsByteCount)} (${tcpRetransmission.allPacketsCount} packets)`,
-      `Resent TCP traffic: ${pretty(tcpRetransmission.resentBytesCount)} (${tcpRetransmission.resentPacketsCount} packets)`,
-      `TCP retransmisisons count for ${percentage(tcpRetransmission.resentBytesCount, tcpRetransmission.allPacketsByteCount)}% of all TCP traffic`
+      ''
     ].join('\n'))
-    console.log()
 
     const tlsTotal = allTcpSessions.filter(({ type }) => type === 'tls').reduce((tlsTotal, { bytes }) => tlsTotal + bytes, 0)
     const tlsMeta = allTcpSessions.filter(({ type }) => type === 'tls').reduce((tlsMeta, { tls: { metaTraffic } }) => tlsMeta + metaTraffic, 0)
     console.log([
+      '',
       '🔒 TLS Information',
       '==================',
+      `Total traffic sent over TLS: ${pretty(tlsTotal)} (${percentage(tlsTotal, totals.bytesCount)}% of all traffic)`,
+      `Meta traffic sent over TLS:  ${pretty(tlsMeta)} (${percentage(tlsMeta, totals.bytesCount)}% of all traffic [potential removal if using connectors])`,
+      '',
       'The TLS information is a good indicator on whether or not the customer might',
       'gain from using connectors. If the meta traffic is above 50%, it means that they',
       'could at least save 50% of that part of the traffic sent over the TLS.',
-      '',
-      `Total traffic sent over TLS: ${pretty(tlsTotal)} (${percentage(tlsTotal, totals.bytesCount)}% of all traffic)`,
-      `Meta traffic sent over TLS: ${pretty(tlsMeta)} (${percentage(tlsMeta, totals.bytesCount)}% of all traffic [this could be removed if using connectors])`,
+      ''
     ].join('\n'))
-    console.log()
 
     console.log([
+      '',
       '🚦 Hosts information',
       '====================',
+    ].concat(Object
+      .entries(trafficToHosts)
+      .map(([ip, { bytesUp, bytesDown }]) =>
+        `${strLen(ip, 15)} ${pretty(bytesUp)}⬆ ${pretty(bytesDown)}⬇  (${percentage(bytesUp + bytesDown, totals.bytesCount)}% of all traffic)`
+    )).concat([
+      '',
       'The information about hosts is something that could be shared with the customer',
       'It can help them visualize if there are any hosts that shouldn\'t be there, or',
       'if any of them use too much traffic.',
       ''
-    ]
-      .concat(Object
-        .entries(trafficToHosts)
-        .map(([ip, { bytesUp, bytesDown }]) =>
-          `${strLen(ip, 15)} ${strLen(pretty(bytesUp, { minimumFractionDigits: 2 }), 12, 'right')}⬆ ${strLen(pretty(bytesDown, { minimumFractionDigits: 2 }), 12, 'right')}⬇ (${percentage(bytesUp + bytesDown, totals.bytesCount)}% of all traffic)`
-        ))
-      .join('\n'))
+    ])
+    .join('\n'))
   })
 
 function percentage (part, all) {
@@ -173,6 +178,10 @@ function percentage (part, all) {
 function strLen (str, length, align = 'left') {
   if (align === 'left') return str + Array(length - str.length).fill(' ').join('')
   if (align === 'right') return Array(length - str.length).fill(' ').join('') + str
+}
+
+function pretty (bytes, length = 12, align = 'right') {
+  return strLen(prettyBytes(bytes, { minimumFractionDigits: 2, maximumFractionDigits: 2 }), length, align)
 }
 
 const ipHeaderParser = new BinaryParser()
