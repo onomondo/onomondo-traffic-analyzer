@@ -36,93 +36,13 @@ const trafficToHosts = {}
 
 pcapParser
   .parse(pcapFilename)
-  .on('packet', ({ header, data: packet }) => {
-    const ipPacket = packetType === 'ip'
-      ? packet
-      : packet.slice(14)
-    const ipHeader = ipHeaderParser.parse(ipPacket)
-    const isIcmp = ipHeader.protocol === 1
-    const isTcp = ipHeader.protocol === 6
-    const isUdp = ipHeader.protocol === 17
-    const isFromDevice = ipChecker.isDeviceSubnet(ip(ipHeader.src))
-    const trafficHost = isFromDevice ? ip(ipHeader.dst) : ip(ipHeader.src)
-    trafficToHosts[trafficHost] = trafficToHosts[trafficHost] || { bytesUp: 0, bytesDown: 0 }
-    if (isFromDevice) {
-      trafficToHosts[trafficHost].bytesUp += packet.length
-    } else {
-      trafficToHosts[trafficHost].bytesDown += packet.length
-    }
-
-    totals.bytesCount += packet.length
-    totals.packetsCount += 1
-
-    if (isUdp) {
-      const udpPacket = ipPacket.slice(20)
-      const udpHeader = udpHeaderParser.parse(udpPacket)
-      const currentSession = sessions.udp.get({ ipHeader, udpHeader }) || { packets: 0, bytes: 0 }
-
-      totals.udpBytesCount += packet.length
-
-      sessions.udp.set({
-        ipHeader,
-        udpHeader,
-        value: {
-          packets: currentSession.packets + 1,
-          bytes: currentSession.bytes + packet.length
-        }
-      })
-    }
-    if (isTcp) {
-      const tcpPacket = ipPacket.slice(20)
-      const tcpHeader = tcpHeaderParser.parse(tcpPacket)
-      const isFirst = tcpHeader.flags.syn && !tcpHeader.flags.ack
-      const isTls = tcpHeader.srcPort === 443 || tcpHeader.srcPort === 8883 || tcpHeader.dstPort === 443 || tcpHeader.dstPort === 8883
-
-      totals.tcpBytesCount += packet.length
-
-      // Retransmission handling
-      const tcpPacketHex = tcpPacket.toString('hex')
-      const isPacketAlreadySent = tcpRetransmission.allPacketsBuffer.includes(tcpPacketHex)
-      if (!isPacketAlreadySent) tcpRetransmission.allPacketsBuffer.push(tcpPacketHex)
-      tcpRetransmission.allPacketsCount += 1
-      tcpRetransmission.allPacketsByteCount += tcpPacket.length
-      if (isPacketAlreadySent) {
-        tcpRetransmission.resentBytesCount += tcpPacket.length
-        tcpRetransmission.resentPacketsCount += 1
-      }
-
-      if (isFirst) {
-        const currentSession = sessions.tcp.get({ ipHeader, tcpHeader })
-        const tcpPortsAlreadyInUse = !!currentSession
-        if (tcpPortsAlreadyInUse) {
-          allTcpSessions.push(currentSession)
-        }
-        sessions.tcp.set({ ipHeader, tcpHeader, value: { packets: 0, bytes: 0 } })
-      }
-
-      const session = sessions.tcp.get({ ipHeader, tcpHeader }) || { packets: 0, bytes: 0 }
-
-      if (isTls) {
-        const tlsPacket = ipPacket.slice(8 * tcpHeader.dataOffset)
-        session.type = 'tls'
-        session.tls = session.tls || { metaTraffic: 0 }
-
-        if (tlsPacket.length !== 0) {
-          const tlsHeader = tlsHeaderParser.parse(tlsPacket)
-          const isHandshake = tlsHeader.type === 22
-          const isCipherChange = tlsHeader.type === 20
-          const isMetaTrafic = isHandshake || isCipherChange
-          if (isMetaTrafic) session.tls.metaTraffic += tlsHeader.length
-        }
-      }
-
-      session.packets += 1
-      session.bytes += packet.length
-      sessions.tcp.set({
-        ipHeader,
-        tcpHeader,
-        value: session
-      })
+  .on('packet', packet => {
+    try {
+      parsePacket(packet)
+    } catch (err) {
+      console.error(err)
+      console.error(`Crash happened at packet ${totals.packetsCount}. Investigate using Wireshark, and open that packet.`)
+      process.exit(1)
     }
   })
   .on('end', () => {
@@ -185,6 +105,104 @@ pcapParser
     .join('\n'))
   })
 
+function parsePacket ({ header, data: packet }) {
+  const ipPacket = packetType === 'ip'
+    ? packet
+    : packet.slice(14)
+  const ipHeader = ipHeaderParser.parse(ipPacket)
+  const isIcmp = ipHeader.protocol === 1
+  const isTcp = ipHeader.protocol === 6
+  const isUdp = ipHeader.protocol === 17
+  const isFromDevice = ipChecker.isDeviceSubnet(ip(ipHeader.src))
+  const trafficHost = isFromDevice ? ip(ipHeader.dst) : ip(ipHeader.src)
+  trafficToHosts[trafficHost] = trafficToHosts[trafficHost] || { bytesUp: 0, bytesDown: 0 }
+  if (isFromDevice) {
+    trafficToHosts[trafficHost].bytesUp += packet.length
+  } else {
+    trafficToHosts[trafficHost].bytesDown += packet.length
+  }
+
+  totals.bytesCount += packet.length
+  totals.packetsCount += 1
+
+  if (isUdp) {
+    const udpPacket = ipHeader.data
+    const udpHeader = udpHeaderParser.parse(udpPacket)
+    const currentSession = sessions.udp.get({ ipHeader, udpHeader }) || { packets: 0, bytes: 0 }
+
+    totals.udpBytesCount += packet.length
+
+    sessions.udp.set({
+      ipHeader,
+      udpHeader,
+      value: {
+        packets: currentSession.packets + 1,
+        bytes: currentSession.bytes + packet.length
+      }
+    })
+  }
+  if (isTcp) {
+    const tcpPacket = ipHeader.data
+    const tcpHeader = tcpHeaderParser.parse(tcpPacket)
+    const isFirst = tcpHeader.flags.syn && !tcpHeader.flags.ack
+    const isTls = tcpHeader.srcPort === 443 || tcpHeader.srcPort === 8883 || tcpHeader.dstPort === 443 || tcpHeader.dstPort === 8883
+
+    totals.tcpBytesCount += packet.length
+
+    // Retransmission handling
+    const tcpPacketHex = tcpPacket.toString('hex')
+    const isPacketAlreadySent = tcpRetransmission.allPacketsBuffer.includes(tcpPacketHex)
+    if (!isPacketAlreadySent) tcpRetransmission.allPacketsBuffer.push(tcpPacketHex)
+    tcpRetransmission.allPacketsCount += 1
+    tcpRetransmission.allPacketsByteCount += tcpPacket.length
+    if (isPacketAlreadySent) {
+      tcpRetransmission.resentBytesCount += tcpPacket.length
+      tcpRetransmission.resentPacketsCount += 1
+    }
+
+    if (isFirst) {
+      const currentSession = sessions.tcp.get({ ipHeader, tcpHeader })
+      const tcpPortsAlreadyInUse = !!currentSession
+      if (tcpPortsAlreadyInUse) {
+        allTcpSessions.push(currentSession)
+      }
+      sessions.tcp.set({ ipHeader, tcpHeader, value: { packets: 0, bytes: 0 } })
+    }
+
+    const session = sessions.tcp.get({ ipHeader, tcpHeader }) || { packets: 0, bytes: 0 }
+
+    if (isTls) {
+      const tlsPacket = tcpHeader.data
+      session.type = 'tls'
+      session.tls = session.tls || { metaTraffic: 0 }
+
+      if (tlsPacket.length !== 0) {
+        // When retransmissions happen, a packet may contain only the first part of a TLS packet.
+        // E.g. a packet could be 1360 bytes long, but in the TLS layer it can report that it's e.g 2500 bytes long.
+        // So be to on the safe side, we only take the minimum of packet length or the tls' layers combined length.
+        const tlsHeader = tlsHeaderParser.parse(tlsPacket)
+        const bytesToSaveReportedFromTlsLayers = tlsHeader.layers.reduce((bytesToSave, { type, version, length }) => {
+          const isHandshake = type === 22
+          const isCipherChange = type === 20
+          const isMetaTrafic = isHandshake || isCipherChange
+
+          return bytesToSave + (isMetaTrafic ? length : 0)
+        }, 0)
+        const actualBytesToSave = Math.min(bytesToSaveReportedFromTlsLayers, ipPacket.length)
+        session.tls.metaTraffic += actualBytesToSave
+      }
+    }
+
+    session.packets += 1
+    session.bytes += packet.length
+    sessions.tcp.set({
+      ipHeader,
+      tcpHeader,
+      value: session
+    })
+  }
+}
+
 function percentage (part, all) {
   return Math.floor(100 * (part / all))
 }
@@ -229,6 +247,11 @@ const ipHeaderParser = new BinaryParser()
     type: 'uint8',
     length: 4,
   })
+  .buffer('data', {
+    length: function () {
+      return this.packetLength - (4 * this.headerLength)
+    }
+  })
 
 const tcpHeaderParser = new BinaryParser()
   .endianess('big')
@@ -250,6 +273,12 @@ const tcpHeaderParser = new BinaryParser()
   .uint16('windowSize')
   .uint16('checksum')
   .uint16('urgentPointer')
+  .skip(function () {
+    return (4 * this.dataOffset) - 20
+  })
+  .buffer('data', {
+    readUntil: 'eof'
+  })
 
 const udpHeaderParser = new BinaryParser()
   .endianess('big')
@@ -260,6 +289,15 @@ const udpHeaderParser = new BinaryParser()
 
 const tlsHeaderParser = new BinaryParser()
   .endianess('big')
-  .uint8('type')
-  .uint16('version')
-  .uint16('length')
+    .array('layers', {
+      readUntil: 'eof',
+      type: new BinaryParser()
+        .uint8('type')
+        .uint16('version')
+        .uint16('length')
+        .buffer('data', {
+          length: function () {
+            return this.length
+          }
+        })
+    })
