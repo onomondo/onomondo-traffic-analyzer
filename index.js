@@ -33,6 +33,7 @@ const tcpRetransmission = {
 
 const allTcpSessions = []
 const trafficToHosts = {}
+const erroneousPackets = []
 
 pcapParser
   .parse(pcapFilename)
@@ -40,9 +41,11 @@ pcapParser
     try {
       parsePacket(packet)
     } catch (err) {
-      console.error(err)
-      console.error(`Crash happened at packet ${totals.packetsCount}. Investigate using Wireshark, and open that packet.`)
-      process.exit(1)
+      erroneousPackets.push({
+        number: totals.packetsCount,
+        size: packet.data.length,
+        error: err.message
+      })
     }
   })
   .on('end', () => {
@@ -103,6 +106,21 @@ pcapParser
       ''
     ])
     .join('\n'))
+
+    if (erroneousPackets.length) {
+      const erroneousTotalSize = erroneousPackets.reduce((erroneousTotalSize, { size }) => erroneousTotalSize + size, 0)
+      console.log([
+        '',
+        '🛑 Parsing error information',
+        '============================',
+        `Total size of erroneous packets: ${pretty(erroneousTotalSize)}`,
+        'Erroneous packets:',
+        erroneousPackets.map(({ number, error }) => `[${number}] ${error}`),
+        '',
+        'This is information for Onomondo. The Traffic Analyzer had issues parsing some packets.',
+        'Show this to whoever is working on Traffic Analyzer. Might not be a big problem :)'
+      ].join('\n'))
+    }
   })
 
 function parsePacket ({ header, data: packet }) {
