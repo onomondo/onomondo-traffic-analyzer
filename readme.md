@@ -5,9 +5,8 @@ Analyze the traffic from a pcap file and learn if there's something that stands 
 ## Installation
 
 ```
-$ git clone git@github.com:onomondo/onomondo-traffic-analyzer.git
-$ cd onomondo-traffic-analyzer
-$ yarn
+$ npm install -g onomondo-traffic-analyzer
+$ onomondo-traffic-analyzer somefile.pcap
 ```
 
 ## Parameters
