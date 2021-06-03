@@ -125,7 +125,7 @@ async function run () {
           '============================',
           `Total size of erroneous packets: ${pretty(erroneousTotalSize)}`,
           'Erroneous packets:',
-          erroneousPackets.map(({ number, error }) => `[${number}] ${error}`),
+          erroneousPackets.map(({ number, error }) => `[${number}] ${error}`).join('\n'),
           '',
           'This is debugging information that can be shared with Onomondo. The Traffic',
           'Analyzer had issues parsing some packets. You can send this information as long',
