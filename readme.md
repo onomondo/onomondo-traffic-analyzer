@@ -22,7 +22,7 @@ Optional, defaults to `ip`.
 You need a pcap file somewhere. It's supposed to be a couple (or more) from one fleet.
 
 ```
-$ onomondo-traffic-analyzer --type=ip somefile.pcap`
+$ onomondo-traffic-analyzer --type=ip somefile.pcap
 ```
 
 which would return
