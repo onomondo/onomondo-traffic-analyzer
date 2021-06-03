@@ -1,6 +1,6 @@
 {
   "name": "onomondo-traffic-analyzer",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "bin": "./index.js",
   "license": "MIT",
   "description": "Analyze pcap files",
