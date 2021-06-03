@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 
 const pcapParser = require('pcap-parser')
-const BinaryParser = require('binary-parser').Parser
 const sessions = require('./sessions')
 const prettyBytes = require('pretty-bytes')
 const ipChecker = require('onomondo-ip-checker')
 const minimist = require('minimist')
+const { ipHeaderParser, tcpHeaderParser, udpHeaderParser, tlsHeaderParser } = require('./parsers')
+const pkgJson = require('./package.json')
+const getPackageJson = require('package-json')
 
 const argv = minimist(process.argv.slice(2))
 const pcapFilename = argv._.join(' ')
@@ -17,6 +19,9 @@ if (!pcapFilename) exit('You need to specify filename to pcap file')
 if (!hasAllParameters) exit('Not all needed parameters are specified')
 if (!hasCorrectPacketType) exit('Only "ip" and "ethernet" packet types are allowed')
 
+const allTcpSessions = []
+const trafficToHosts = {}
+const erroneousPackets = []
 const totals = {
   bytesCount: 0,
   packetsCount: 0,
@@ -31,97 +36,105 @@ const tcpRetransmission = {
   resentBytesCount: 0
 }
 
-const allTcpSessions = []
-const trafficToHosts = {}
-const erroneousPackets = []
+run()
 
-pcapParser
-  .parse(pcapFilename)
-  .on('packet', packet => {
-    try {
-      parsePacket(packet)
-    } catch (err) {
-      erroneousPackets.push({
-        number: totals.packetsCount,
-        size: packet.data.length,
-        error: err.message
-      })
-    }
-  })
-  .on('end', () => {
-    sessions.tcp.getAll().forEach(tcpSession => allTcpSessions.push(tcpSession))
-    console.log([
-      '',
-      '🌎 Overall information',
-      '======================',
-      `Total traffic: ${pretty(totals.bytesCount)}`,
-      `TCP traffic:   ${pretty(totals.tcpBytesCount)} (${percentage(totals.tcpBytesCount, totals.bytesCount)}% of all traffic)`,
-      `UDP traffic:   ${pretty(totals.udpBytesCount)} (${percentage(totals.udpBytesCount, totals.bytesCount)}% of all traffic)`,
-      ''
-    ].join('\n'))
+async function run () {
+  console.error(`Onomondo Traffic Analyzer ${pkgJson.version} (node.js ${process.version})`)
+  console.error('')
 
-    console.log([
-      '',
-      '👯‍♀️ TCP Retransmission information',
-      '=================================',
-      `Total TCP traffic:  ${pretty(tcpRetransmission.allPacketsByteCount)} (${tcpRetransmission.allPacketsCount} packets)`,
-      `Resent TCP traffic: ${pretty(tcpRetransmission.resentBytesCount)} (${tcpRetransmission.resentPacketsCount} packets)`,
-      `TCP retransmisisons count for ${percentage(tcpRetransmission.resentBytesCount, tcpRetransmission.allPacketsByteCount)}% of all TCP traffic`,
-      '',
-      'The TCP retransmission says something about how much TCP traffic is resent.',
-      'It is not necesarrily a bad thing, but if the percentage is above 30% you could',
-      'mention to the customer that there is a lot of TCP retransmissions and that they',
-      'might want to look into that by using live monitor.',
-      ''
-    ].join('\n'))
+  const publicVersion = await getPublicVersion()
+  const isUsingCorrectVersion = pkgJson.version === publicVersion
+  if (!isUsingCorrectVersion) console.error(`You are currently using version ${pkgJson.version} and the latest version is ${publicVersion}\n`)
 
-    const tlsTotal = allTcpSessions.filter(({ type }) => type === 'tls').reduce((tlsTotal, { bytes }) => tlsTotal + bytes, 0)
-    const tlsMeta = allTcpSessions.filter(({ type }) => type === 'tls').reduce((tlsMeta, { tls: { metaTraffic } }) => tlsMeta + metaTraffic, 0)
-    console.log([
-      '',
-      '🔒 TLS Information',
-      '==================',
-      `Total traffic sent over TLS: ${pretty(tlsTotal)} (${percentage(tlsTotal, totals.bytesCount)}% of all traffic)`,
-      `Meta traffic sent over TLS:  ${pretty(tlsMeta)} (${percentage(tlsMeta, totals.bytesCount)}% of all traffic [potential removal if using connectors])`,
-      '',
-      'The TLS information is a good indicator on whether or not the customer might',
-      'gain from using connectors. If the meta traffic is above 50%, it means that they',
-      'could at least save 50% of that part of the traffic sent over the TLS.',
-      ''
-    ].join('\n'))
-
-    console.log([
-      '',
-      '🚦 Hosts information',
-      '====================',
-    ].concat(Object
-      .entries(trafficToHosts)
-      .map(([ip, { bytesUp, bytesDown }]) =>
-        `${strLen(ip, 15)} ${pretty(bytesUp)}⬆ ${pretty(bytesDown)}⬇  (${percentage(bytesUp + bytesDown, totals.bytesCount)}% of all traffic)`
-    )).concat([
-      '',
-      'The information about hosts is something that could be shared with the customer',
-      'It can help them visualize if there are any hosts that shouldn\'t be there, or',
-      'if any of them use too much traffic.',
-      ''
-    ])
-    .join('\n'))
-
-    if (erroneousPackets.length) {
-      const erroneousTotalSize = erroneousPackets.reduce((erroneousTotalSize, { size }) => erroneousTotalSize + size, 0)
+  pcapParser
+    .parse(pcapFilename)
+    .on('packet', packet => {
+      try {
+        parsePacket(packet)
+      } catch (err) {
+        erroneousPackets.push({
+          number: totals.packetsCount,
+          size: packet.data.length,
+          error: err.message
+        })
+      }
+    })
+    .on('end', () => {
+      sessions.tcp.getAll().forEach(tcpSession => allTcpSessions.push(tcpSession))
       console.log([
         '',
-        '🛑 Parsing error information',
-        '============================',
-        `Total size of erroneous packets: ${pretty(erroneousTotalSize)}`,
-        'Erroneous packets:',
-        erroneousPackets.map(({ number, error }) => `[${number}] ${error}`),
-        '',
-        'This is information for Onomondo. The Traffic Analyzer had issues parsing some packets.',
-        'Show this to whoever is working on Traffic Analyzer. Might not be a big problem :)'
+        '🌎 Overall information',
+        '======================',
+        `Total traffic: ${pretty(totals.bytesCount)}`,
+        `TCP traffic:   ${pretty(totals.tcpBytesCount)} (${percentage(totals.tcpBytesCount, totals.bytesCount)}% of all traffic)`,
+        `UDP traffic:   ${pretty(totals.udpBytesCount)} (${percentage(totals.udpBytesCount, totals.bytesCount)}% of all traffic)`,
+        ''
       ].join('\n'))
-    }
-  })
+
+      console.log([
+        '',
+        '👯‍♀️ TCP Retransmission information',
+        '=================================',
+        `Total TCP traffic:  ${pretty(tcpRetransmission.allPacketsByteCount)} (${tcpRetransmission.allPacketsCount} packets)`,
+        `Resent TCP traffic: ${pretty(tcpRetransmission.resentBytesCount)} (${tcpRetransmission.resentPacketsCount} packets)`,
+        `TCP retransmisisons count for ${percentage(tcpRetransmission.resentBytesCount, tcpRetransmission.allPacketsByteCount)}% of all TCP traffic`,
+        '',
+        'The TCP retransmission says something about how much TCP traffic is resent.',
+        'It is not necesarrily a bad thing, but if the percentage is above ~15% you',
+        'should probably look into why that it.',
+        ''
+      ].join('\n'))
+
+      const tlsTotal = allTcpSessions.filter(({ type }) => type === 'tls').reduce((tlsTotal, { bytes }) => tlsTotal + bytes, 0)
+      const tlsMeta = allTcpSessions.filter(({ type }) => type === 'tls').reduce((tlsMeta, { tls: { metaTraffic } }) => tlsMeta + metaTraffic, 0)
+      console.log([
+        '',
+        '🔒 TLS Information',
+        '==================',
+        `Total traffic sent over TLS: ${pretty(tlsTotal)} (${percentage(tlsTotal, totals.bytesCount)}% of all traffic)`,
+        `Meta traffic sent over TLS:  ${pretty(tlsMeta)} (${percentage(tlsMeta, totals.bytesCount)}% of all traffic [potential removal if using Connectors])`,
+        '',
+        'The meta traffic in TLS is mostly the handshake. If the meat traffic accounts',
+        'for most of the traffic, then you could look into using Connectors and see if',
+        'you can save any data.',
+        ''
+      ].join('\n'))
+
+      console.log([
+        '',
+        '🚦 Hosts information',
+        '====================',
+      ].concat(Object
+        .entries(trafficToHosts)
+        .map(([ip, { bytesUp, bytesDown }]) =>
+          `${strLen(ip, 15)} ${pretty(bytesUp)}⬆ ${pretty(bytesDown)}⬇  (${percentage(bytesUp + bytesDown, totals.bytesCount)}% of all traffic)`
+      )).concat([
+        '',
+        'Information about hosts can be used to see if there is something that looks out',
+        'of ordinary. And to give insights into which hosts account for most of the',
+        'traffic.',
+        ''
+      ])
+      .join('\n'))
+
+      if (erroneousPackets.length) {
+        const erroneousTotalSize = erroneousPackets.reduce((erroneousTotalSize, { size }) => erroneousTotalSize + size, 0)
+        console.log([
+          '',
+          '🛑 Parsing error information',
+          '============================',
+          `Total size of erroneous packets: ${pretty(erroneousTotalSize)}`,
+          'Erroneous packets:',
+          erroneousPackets.map(({ number, error }) => `[${number}] ${error}`),
+          '',
+          'This is debugging information that can be shared with Onomondo. The Traffic',
+          'Analyzer had issues parsing some packets. You can send this information as long',
+          'as your PCAP file to Onomondo and we use this to make the Traffic Analyzer',
+          'better.'
+        ].join('\n'))
+      }
+    })
+}
 
 function parsePacket ({ header, data: packet }) {
   const ipPacket = packetType === 'ip'
@@ -245,77 +258,7 @@ function exit (str) {
   process.exit(1)
 }
 
-const ipHeaderParser = new BinaryParser()
-  .endianess('big')
-  .bit4('version')
-  .bit4('headerLength')
-  .uint8('tos')
-  .uint16('packetLength')
-  .uint16('id')
-  .bit3('offset')
-  .bit13('fragOffset')
-  .uint8('ttl')
-  .uint8('protocol')
-  .uint16('checksum')
-  .array('src', {
-    type: 'uint8',
-    length: 4,
-  })
-  .array('dst', {
-    type: 'uint8',
-    length: 4,
-  })
-  .buffer('data', {
-    length: function () {
-      return this.packetLength - (4 * this.headerLength)
-    }
-  })
-
-const tcpHeaderParser = new BinaryParser()
-  .endianess('big')
-  .uint16('srcPort')
-  .uint16('dstPort')
-  .uint32('seq')
-  .uint32('ack')
-  .bit4('dataOffset')
-  .bit6('reserved')
-  .nest('flags', {
-    type: new BinaryParser()
-      .bit1('urg')
-      .bit1('ack')
-      .bit1('psh')
-      .bit1('rst')
-      .bit1('syn')
-      .bit1('fin'),
-  })
-  .uint16('windowSize')
-  .uint16('checksum')
-  .uint16('urgentPointer')
-  .skip(function () {
-    return (4 * this.dataOffset) - 20
-  })
-  .buffer('data', {
-    readUntil: 'eof'
-  })
-
-const udpHeaderParser = new BinaryParser()
-  .endianess('big')
-  .uint16('srcPort')
-  .uint16('dstPort')
-  .uint16('length')
-  .uint16('checksum')
-
-const tlsHeaderParser = new BinaryParser()
-  .endianess('big')
-    .array('layers', {
-      readUntil: 'eof',
-      type: new BinaryParser()
-        .uint8('type')
-        .uint16('version')
-        .uint16('length')
-        .buffer('data', {
-          length: function () {
-            return this.length
-          }
-        })
-    })
+async function getPublicVersion () {
+  const pkgJson = await getPackageJson('onomondo-traffic-analyzer')
+  return pkgJson.version
+}
